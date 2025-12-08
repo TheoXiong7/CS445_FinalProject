@@ -45,3 +45,5 @@ Images in `style-transfer-dataset/`:
 ## References
 
 - Gatys et al., "Image Style Transfer Using Convolutional Neural Networks", CVPR 2016
+
+- [Image Dataset](https://github.com/victorkitov/style-transfer-dataset)
