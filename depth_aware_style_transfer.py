@@ -469,6 +469,148 @@ def visualize_depth_layers(
     return vis
 
 
+def load_precomputed_masks(
+    mask_dir: str,
+    image_name: str,
+    target_shape: Tuple[int, int],
+    feather_radius: int = 15
+) -> Dict[str, np.ndarray]:
+    """Load pre-computed masks from disk.
+
+    Args:
+        mask_dir: Directory containing mask files
+        image_name: Base name of the image (without extension)
+        target_shape: (H, W) to resize masks to
+        feather_radius: Gaussian blur radius for soft edges
+
+    Returns:
+        Dictionary with 'foreground', 'midground', 'background' soft masks
+    """
+    masks = {}
+    for layer, suffix in [('foreground', 'fg'), ('midground', 'mg'), ('background', 'bg')]:
+        mask_path = os.path.join(mask_dir, f"{image_name}_{suffix}_mask.png")
+        if os.path.exists(mask_path):
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            mask = cv2.resize(mask, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR)
+            mask = mask.astype(np.float32) / 255.0
+        else:
+            # Default to zeros if mask not found
+            mask = np.zeros(target_shape, dtype=np.float32)
+
+        # Apply feathering
+        if feather_radius > 0:
+            kernel_size = feather_radius * 2 + 1
+            mask = cv2.GaussianBlur(mask, (kernel_size, kernel_size), 0)
+
+        masks[layer] = mask
+
+    # Normalize so masks sum to 1
+    total = masks['foreground'] + masks['midground'] + masks['background']
+    total = np.maximum(total, 1e-8)
+    for layer in masks:
+        masks[layer] = masks[layer] / total
+
+    return masks
+
+
+def depth_aware_style_transfer_with_masks(
+    content_path: str,
+    style_path: str,
+    masks: Dict[str, np.ndarray],
+    output_size: int = 512,
+    num_steps: int = 200,
+    style_weight: float = 1e4,
+    content_weight: float = 1,
+    style_strengths: Dict[str, float] = None,
+    verbose: bool = True
+) -> np.ndarray:
+    """Run depth-aware style transfer with pre-computed masks.
+
+    Args:
+        content_path: Path to content image
+        style_path: Path to style image
+        masks: Pre-computed soft masks dict
+        output_size: Maximum dimension of output
+        num_steps: Style transfer optimization steps
+        style_weight: Weight for style loss
+        content_weight: Weight for content loss
+        style_strengths: Dict with stylization strength per layer
+        verbose: Print progress
+
+    Returns:
+        result: Final blended image [H, W, 3]
+    """
+    if style_strengths is None:
+        style_strengths = {
+            'foreground': 0.3,
+            'midground': 0.7,
+            'background': 1.0
+        }
+
+    # Load and resize content image
+    content_img = Image.open(content_path).convert('RGB')
+    ratio = output_size / max(content_img.size)
+    new_size = tuple(int(dim * ratio) for dim in content_img.size)
+    content_img = content_img.resize(new_size, Image.LANCZOS)
+    content_np = np.array(content_img)
+
+    # Run style transfer
+    if verbose:
+        print(f"Running style transfer ({num_steps} steps)...")
+
+    stylized = stylize_image(
+        content_path=content_path,
+        style_path=style_path,
+        output_size=output_size,
+        num_steps=num_steps,
+        style_weight=style_weight,
+        content_weight=content_weight,
+        verbose=verbose
+    )
+
+    # Resize stylized to match content if needed
+    if stylized.shape[:2] != content_np.shape[:2]:
+        stylized = cv2.resize(stylized, (content_np.shape[1], content_np.shape[0]))
+
+    # Use same stylized image for all layers
+    stylized_layers = {
+        'foreground': stylized,
+        'midground': stylized,
+        'background': stylized
+    }
+
+    # Blend layers
+    if verbose:
+        print("Blending layers...")
+    result = blend_stylized_layers(
+        content_np, stylized_layers, masks, style_strengths
+    )
+
+    return result
+
+
+def process_single_pair(args):
+    """Process a single content-style pair. Used for parallel processing."""
+    content_path, style_path, masks, output_size, num_steps, style_weight, content_weight, style_strengths, output_path = args
+
+    try:
+        result = depth_aware_style_transfer_with_masks(
+            content_path=content_path,
+            style_path=style_path,
+            masks=masks,
+            output_size=output_size,
+            num_steps=num_steps,
+            style_weight=style_weight,
+            content_weight=content_weight,
+            style_strengths=style_strengths,
+            verbose=False
+        )
+        Image.fromarray(result).save(output_path)
+        return output_path, True, None
+    except Exception as e:
+        return output_path, False, str(e)
+
+
 # Demo / test
 if __name__ == '__main__':
     dataset_path = 'style-transfer-dataset'
