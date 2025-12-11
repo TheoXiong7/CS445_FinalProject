@@ -17,7 +17,7 @@ from style_transfer import stylize_image
 stylized = stylize_image(
     content_path='style-transfer-dataset/contents/content_1.jpg',
     style_path='style-transfer-dataset/styles/style_1.jpg',
-    output_size=1920,
+    output_size=1080,
     num_steps=300,
     style_weight=1e4,
     content_weight=1,
@@ -38,9 +38,9 @@ stylized = stylize_image(
 
 ## Dataset
 
-Images in `style-transfer-dataset/`:
-- `contents/` - 50 content images
-- `styles/` - 50 style images
+Images in `data/`:
+- `images/` - 100 content images
+- `styles/` - 5 style images
 
 ## References
 
